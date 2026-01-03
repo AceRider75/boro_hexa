@@ -380,23 +380,23 @@ class Controller:
         #self.land_drone()
         
         # Set mission speed (m/s) - increase for faster mission completion
-        self.set_speed(8.0)  # 8 m/s ground speed
+        # self.set_speed(8.0)  # 8 m/s ground speed
 
 
-    def set_speed(self, speed_m_s: float):
-        """Set ground speed in m/s for waypoint navigation"""
-        self.the_connection.mav.command_long_send(
-            self.the_connection.target_system,
-            self.the_connection.target_component,
-            mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
-            0,
-            1,              # Speed type: 1 = ground speed
-            speed_m_s,      # Speed in m/s
-            -1,             # Throttle (-1 = no change)
-            0, 0, 0, 0
-        )
-        self.log += log_message("PixHawk", f"Speed set to {speed_m_s} m/s")
-        print(f"Ground speed set to {speed_m_s} m/s")
+    # def set_speed(self, speed_m_s: float):
+    #     """Set ground speed in m/s for waypoint navigation"""
+    #     self.the_connection.mav.command_long_send(
+    #         self.the_connection.target_system,
+    #         self.the_connection.target_component,
+    #         mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED,
+    #         0,
+    #         1,              # Speed type: 1 = ground speed
+    #         speed_m_s,      # Speed in m/s
+    #         -1,             # Throttle (-1 = no change)
+    #         0, 0, 0, 0
+    #     )
+    #     self.log += log_message("PixHawk", f"Speed set to {speed_m_s} m/s")
+    #     print(f"Ground speed set to {speed_m_s} m/s")
 
 
     def land_drone(self):           #Land the drone
