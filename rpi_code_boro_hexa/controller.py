@@ -346,7 +346,7 @@ class Controller:
         # else:
         #     self.log += log_message("PixHawk", f"No Ack for Takeoff Command\n")
 
-        ack = self.take_off_with_retry(height=3, retries=3)
+        ack = self.take_off_with_retry(height=3, retries=1)
 
         if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             self.log += log_message("PixHawk", "Takeoff Command Accepted. Climbing...\n")

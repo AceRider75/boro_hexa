@@ -1,7 +1,7 @@
 # main.py
 import time
 from controller import Controller
-from src.image_processing import spot_tracker
+# from src.image_processing import spot_tracker
 
 def main():
     print("Starting Controller in SITL mode...")
@@ -86,4 +86,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    spot_tracker.main()
+    # spot_tracker.main()

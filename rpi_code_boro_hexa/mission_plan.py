@@ -3,11 +3,11 @@
 from geofence import get_polygon_corners
 from typing import List, Tuple, Optional
 import math
-import utils
+from utils import haversine_dist as _haversine_dist
 
 
 class MissionPlanner:
-    def __init__(self, kml: str = None, polygon_name: str = "Field"):
+    def __init__(self, kml: str = "/Users/trishit_debsharma/Documents/Code/NIDAR/boro_hexa/rpi_code_boro_hexa/data/JUs.kml", polygon_name: str = "Field"):
         self.kml = kml
         self.polygon_name = polygon_name
         self.polygon = []
@@ -25,216 +25,6 @@ class MissionPlanner:
             print(f"Polygon centroid: ({self.center_lat:.6f}, {self.center_lon:.6f})")
             print(f"Polygon has {len(self.polygon)} corners")
 
-    def set_targets(
-        self,
-        spacing_meters: float = 5.0,
-        corner_points: int = 0,
-        min_loop_size: float = 3.0,
-        start_lat: Optional[float] = None,
-        start_lon: Optional[float] = None,
-    ) -> List[Tuple[float, float]]:
-        
-        if not self.kml or not self.polygon:
-            return []
-
-        # Reorder polygon to start from corner closest to drone's starting position
-        working_polygon = self._reorder_polygon_from_start(
-            self.polygon, start_lat, start_lon
-        )
-
-        waypoints = []
-        current_polygon = list(working_polygon)  # Start with outer boundary
-        loop_count = 0
-        
-        while True:
-            # Check if polygon is still valid (not collapsed to center)
-            # Check if polygon is still valid (not collapsed to center)
-            # Use max_dist to ensure we cover the outer edges of complex polygons
-            max_dist = max(
-                utils.haversine_dist(lat, lon, self.center_lat, self.center_lon)
-                for lat, lon in current_polygon
-            )
-            
-            if max_dist < min_loop_size:
-                print(f"Stopping at loop {loop_count}: polygon fully collapsed (max dist: {max_dist:.2f}m)")
-                break
-            
-            # Generate smooth path for this loop
-            loop_waypoints = self._generate_smooth_loop(current_polygon, corner_points)
-            waypoints.extend(loop_waypoints)
-            
-            loop_count += 1
-            
-            # Shrink polygon for next loop
-            current_polygon = self._shrink_polygon(current_polygon, spacing_meters)
-            
-            # Safety limit
-            if loop_count > 100:
-                print("Safety limit reached (100 loops)")
-                break
-        
-        # Add final center point
-        waypoints.append((self.center_lat, self.center_lon))
-        
-        print(f"Generated {len(waypoints)} waypoints across {loop_count} loops")
-        print(f"Spacing: {spacing_meters}m, Corner smoothing: {corner_points} points per corner")
-        
-        return waypoints
-
-    def _reorder_polygon_from_start(
-        self,
-        polygon: List[Tuple[float, float]],
-        start_lat: Optional[float],
-        start_lon: Optional[float],
-    ) -> List[Tuple[float, float]]:
-        
-        if not polygon or start_lat is None or start_lon is None:
-            return polygon
-        
-        # Find the corner closest to the start location
-        min_dist = float('inf')
-        closest_idx = 0
-        
-        for i, (lat, lon) in enumerate(polygon):
-            dist = utils.haversine_dist(start_lat, start_lon, lat, lon)
-            if dist < min_dist:
-                min_dist = dist
-                closest_idx = i
-        
-        # Reorder polygon to start from closest corner
-        reordered = polygon[closest_idx:] + polygon[:closest_idx]
-        
-        print(f"Reordered polygon to start from corner {closest_idx} (closest to takeoff, {min_dist:.1f}m away)")
-        
-        return reordered
-
-    def _generate_smooth_loop(
-        self, polygon: List[Tuple[float, float]], corner_points: int
-    ) -> List[Tuple[float, float]]:
-        
-        if len(polygon) < 3:
-            return list(polygon)
-        
-        waypoints = []
-        n = len(polygon)
-        
-        for i in range(n):
-            # Get previous, current, and next corners
-            prev_corner = polygon[(i - 1) % n]
-            curr_corner = polygon[i]
-            next_corner = polygon[(i + 1) % n]
-            
-            # Calculate distances to determine corner radius
-            dist_to_prev = utils.haversine_dist(
-                curr_corner[0], curr_corner[1], prev_corner[0], prev_corner[1]
-            )
-            dist_to_next = utils.haversine_dist(
-                curr_corner[0], curr_corner[1], next_corner[0], next_corner[1]
-            )
-            
-            # Corner radius is fraction of shortest adjacent edge
-            # This ensures the arc doesn't extend past the midpoint of edges
-            corner_radius_ratio = 0.25 # Use 25% of shortest edge
-            effective_radius = min(dist_to_prev, dist_to_next) * corner_radius_ratio
-            
-            # Calculate control points for Bezier curve
-            # Point where arc starts (on edge from prev to curr)
-            t_start = 1.0 - (effective_radius / dist_to_prev) if dist_to_prev > 0 else 1.0
-            t_start = max(0.5, min(1.0, t_start))  # Clamp to [0.5, 1.0]
-            
-            arc_start = (
-                prev_corner[0] + t_start * (curr_corner[0] - prev_corner[0]),
-                prev_corner[1] + t_start * (curr_corner[1] - prev_corner[1])
-            )
-            
-            # Point where arc ends (on edge from curr to next)
-            t_end = effective_radius / dist_to_next if dist_to_next > 0 else 0.0
-            t_end = min(0.5, max(0.0, t_end))  # Clamp to [0.0, 0.5]
-            
-            arc_end = (
-                curr_corner[0] + t_end * (next_corner[0] - curr_corner[0]),
-                curr_corner[1] + t_end * (next_corner[1] - curr_corner[1])
-            )
-            
-            # Add the straight segment point (arc start)
-            waypoints.append(arc_start)
-            
-            # Adaptive Smoothing: Calculate number of points based on arc length
-            # Estimate arc length using chord length (distance between start and end)
-            chord_dist = utils.haversine_dist(
-                arc_start[0], arc_start[1], arc_end[0], arc_end[1]
-            )
-            
-            # Minimum spacing between points in the turn (meters)
-            # 2.0m is safe for 8m/s flight (0.25s between points)
-            min_turn_spacing = 2.0
-            
-            # Calculate number of intermediate points
-            # We want at least 1 point if possible to make it a curve, but not if it's tiny
-            if chord_dist < min_turn_spacing:
-                num_points = 0
-            else:
-                num_points = int(chord_dist / min_turn_spacing)
-            
-            # Generate Bezier curve points
-            # Using quadratic Bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
-            # P0 = arc_start, P1 = curr_corner (control point), P2 = arc_end
-            
-            # We need num_points intermediate points
-            # Steps will be num_points + 1 segments
-            steps = num_points + 1
-            
-            for j in range(1, steps):
-                t = j / steps
-                t_inv = 1.0 - t
-                
-                # Quadratic Bezier interpolation
-                lat = (t_inv * t_inv * arc_start[0] + 
-                       2 * t_inv * t * curr_corner[0] + 
-                       t * t * arc_end[0])
-                lon = (t_inv * t_inv * arc_start[1] + 
-                       2 * t_inv * t * curr_corner[1] + 
-                       t * t * arc_end[1])
-                
-                waypoints.append((lat, lon))
-            
-            # Add arc end point
-            waypoints.append(arc_end)
-        
-        return waypoints
-
-    def _shrink_polygon(
-        self, polygon: List[Tuple[float, float]], step_meters: float
-    ) -> List[Tuple[float, float]]:
-        
-        if not polygon:
-            return []
-
-        new_polygon = []
-        
-        for lat, lon in polygon:
-            # Distance from vertex to center
-            dist_to_center = utils.haversine_dist(lat, lon, self.center_lat, self.center_lon)
-            
-            if dist_to_center <= step_meters:
-                # Vertex would pass center, place at center
-                new_polygon.append((self.center_lat, self.center_lon))
-                continue
-            
-            # Vector from vertex toward center
-            vec_lat = self.center_lat - lat
-            vec_lon = self.center_lon - lon
-            
-            # Move ratio: step_meters / dist_to_center
-            move_ratio = step_meters / dist_to_center
-            
-            new_lat = lat + (vec_lat * move_ratio)
-            new_lon = lon + (vec_lon * move_ratio)
-            
-            new_polygon.append((new_lat, new_lon))
-        
-        return new_polygon
-
     def _centroid(self, vertices: List[Tuple[float, float]]) -> Tuple[float, float]:
         
         if not vertices:
@@ -242,3 +32,147 @@ class MissionPlanner:
         lat = sum(p[0] for p in vertices) / len(vertices)
         lon = sum(p[1] for p in vertices) / len(vertices)
         return lat, lon
+
+    def is_point_inside(self, lat: float, lon: float) -> bool:
+        """Ray-casting point-in-polygon test. Assumes `self.polygon` is list of (lat,lon).
+
+        Uses the standard even-odd rule on projected lat/lon coordinates. Good
+        for reasonably small polygons where lat/lon distortion is negligible.
+        """
+        if not self.polygon:
+            return False
+
+        inside = False
+        n = len(self.polygon)
+        j = n - 1
+        for i in range(n):
+            yi, xi = self.polygon[i]   # lat, lon
+            yj, xj = self.polygon[j]
+            intersect = ((xi > lon) != (xj > lon)) and (
+                lat < (yj - yi) * (lon - xi) / (xj - xi + 1e-16) + yi
+            )
+            if intersect:
+                inside = not inside
+            j = i
+
+        return inside
+
+    # def _haversine_dist(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    #     """Calculate distance between two GPS coordinates in meters."""
+    #     R = 6371000.0  # Earth radius in meters
+    #     phi1 = math.radians(lat1)
+    #     phi2 = math.radians(lat2)
+    #     dphi = math.radians(lat2 - lat1)
+    #     dlambda = math.radians(lon2 - lon1)
+    #     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    #     c = 2*math.atan2(math.sqrt(a), math.sqrt(1-a))
+    #     return R * c
+
+    def _optimize_waypoint_order(
+        self, 
+        waypoints: List[Tuple[float, float]], 
+        start_lat: float, 
+        start_lon: float
+    ) -> List[Tuple[float, float]]:
+        """Reorder waypoints using greedy nearest-neighbor algorithm to minimize flight distance.
+        
+        Args:
+            waypoints: List of (lat, lon) tuples to reorder
+            start_lat: Starting latitude (current drone position)
+            start_lon: Starting longitude (current drone position)
+            
+        Returns:
+            Reordered list of waypoints starting with the nearest point
+        """
+        if not waypoints:
+            return []
+        
+        if len(waypoints) == 1:
+            return waypoints
+        
+        # Greedy nearest-neighbor: always visit the nearest unvisited point
+        unvisited = list(waypoints)
+        ordered = []
+        current_lat, current_lon = start_lat, start_lon
+        
+        while unvisited:
+            # Find nearest waypoint to current position
+            nearest_idx = 0
+            min_dist = float('inf')
+            
+            for i, (lat, lon) in enumerate(unvisited):
+                dist = _haversine_dist(current_lat, current_lon, lat, lon)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_idx = i
+            
+            # Move nearest waypoint to ordered list
+            nearest = unvisited.pop(nearest_idx)
+            ordered.append(nearest)
+            
+            # Update current position
+            current_lat, current_lon = nearest[0], nearest[1]
+        
+        total_distance = 0.0
+        prev_lat, prev_lon = start_lat, start_lon
+        for lat, lon in ordered:
+            total_distance += _haversine_dist(prev_lat, prev_lon, lat, lon)
+            prev_lat, prev_lon = lat, lon
+        
+        print(f"Optimized waypoint order - Total flight distance: {total_distance:.1f}m")
+        
+        return ordered
+
+    def generate_mission_from_points(
+        self, 
+        points: List[Tuple[float, float]], 
+        start_lat: Optional[float] = None, 
+        start_lon: Optional[float] = None
+    ) -> List[Tuple[float, float]]:
+        """Given an array of (lat, lon) points, keep only those that lie
+        inside the planner's KML polygon and return them as an optimized mission list.
+
+        The waypoints are reordered using nearest-neighbor algorithm to minimize
+        flight distance and time. If start_lat/start_lon are provided, optimization
+        begins from that position; otherwise uses polygon centroid.
+
+        Args:
+            points: List of (lat, lon) tuples representing candidate waypoints
+            start_lat: Optional starting latitude for route optimization
+            start_lon: Optional starting longitude for route optimization
+
+        Returns:
+            Optimized list of validated waypoints, or empty list if no polygon loaded
+        """
+        if not self.polygon:
+            print("No polygon loaded; cannot validate points")
+            return []
+
+        # Step 1: Filter points inside polygon
+        valid = []
+        for lat, lon in points:
+            if self.is_point_inside(lat, lon):
+                valid.append((lat, lon))
+            else:
+                print(f"Point outside polygon, skipping: ({lat:.6f}, {lon:.6f})")
+
+        print(f"Validated {len(valid)} / {len(points)} input points inside polygon")
+        
+        if not valid:
+            return []
+        
+        # Step 2: Optimize waypoint order to minimize distance
+        if start_lat is None or start_lon is None:
+            # Use polygon centroid as starting point if not provided
+            start_lat = self.center_lat
+            start_lon = self.center_lon
+            print(f"Using polygon centroid as start: ({start_lat:.6f}, {start_lon:.6f})")
+        else:
+            print(f"Optimizing route from start position: ({start_lat:.6f}, {start_lon:.6f})")
+        
+        optimized = self._optimize_waypoint_order(valid, start_lat, start_lon)
+        
+        return optimized
+    
+
+
