@@ -287,9 +287,17 @@ class Controller:
             
             # Pass start location for path optimization (start from closest polygon corner)
             # Smooth path with 8 corner points, 5m spacing
+
+            points = [
+                (22.497764, 88.372255),
+                (22.497701, 88.372401),
+                (22.497600, 88.372300),
+                (22.497943, 88.372148),
+                (22.498022, 88.372386),
+            ]
             
-            targets = self.Planner.set_targets(
-                spacing_meters=5.0,
+            targets = self.Planner.generate_mission_from_points(
+                points,
                 start_lat=self.lat0,
                 start_lon=self.lon0
             )
